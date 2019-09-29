@@ -7,8 +7,12 @@ library(lubridate)
 library(dplyr)
 library(ggplot2)
 
+#Set directory
+setwd('../ConsolidatedData/')
+path <- paste0(getwd(), '/')
+
 #Load minute data for SPY
-load('../ConsolidatedData/minuteData.Rda')
+load(paste0(path,'minuteData.Rda'))
 
 attr(minuteData$Date, "tzone") <- "EST5EDT"
 minuteData[, Date := Date - 60 * 60] #<- minuteData$Date - 60*60 #subratct hour
@@ -95,13 +99,26 @@ dateData$Strat2CumRet <- cumprod(1 + dateData$Strat2Ret)
 dateData[, Strat3Ret := ifelse(B0 + B1 * R1 + B2 * R2 > 0, 0, -R3)]
 dateData$Strat3CumRet <- cumprod(1 + dateData$Strat3Ret)
 
+dateData$Test <- dateData$Strat1Ret - dateData$SPXRet
+
 #Naive
 dateData$NaiveCumRet <- cumprod(1 + dateData$R3)
 
+hist(dateData$Test)
+
+hist(dateData$Strat1Ret)
+
+hist(dateData$Strat1Ret - dateData$SPXRet)
+
+
+
+
 #Plot strategies
-plot <- ggplot() + 
-  geom_line(data = dateData, aes(x = Date, y = SPXCumRet, colour = 'SPX Long')) + 
-  geom_line(data = dateData, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy')) + 
+plot <- ggplot() +
+  geom_line(data = dateData, aes(x = Date, y = Test, colour = 'Cominbed')) + 
+  
+  #geom_line(data = dateData, aes(x = Date, y = SPXCumRet, colour = 'SPX Long')) + 
+  #geom_line(data = dateData, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy')) + 
   #geom_line(data = dateData, aes(x = Date, y = Strat2CumRet, colour = 'Long Strategy')) + 
   #geom_line(data = dateData, aes(x = Date, y = Strat3CumRet, colour = 'Short Strategy')) + 
   #geom_line(data = dateData, aes(x = Date, y = NaiveCumRet, colour = 'Naive Strategy')) + 
