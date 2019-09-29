@@ -20,8 +20,6 @@ minuteData$Ret <- minuteData$Price / shift(minuteData$Price) - 1
 #Move returns backward so Ret for 9:30 -> Price @ 9:31 / Price @ 9:30 - 1
 minuteData$Ret <- shift(minuteData$Ret, -1)
 
-#Compute 1 minute returns
-
 #Aggregate minute data by date and get P1 (10:00 price), P2 (15:00 price), and P3 (15:30 price)
 dateData <- minuteData[, .(Open = first(Price), Close = last(Price), 
                            P1 = Price[hour(Date) == 10 & minute(Date) == 0],
@@ -30,7 +28,9 @@ dateData <- minuteData[, .(Open = first(Price), Close = last(Price),
                            Vol2 = sd(Ret[hour(Date) == 15 & minute(Date) < 30 ]),
                            P3 = Price[hour(Date) == 15 & minute(Date) == 30],
                            Vol3 = sd(Ret[hour(Date) == 15 & minute(Date) >= 30 ]),
-                           Size = sum(Size)),
+                           Size = sum(Size),
+                           VolSignal = sd(Ret[hour(Date) == 15 & minute(Date) < 30 |
+                                                hour(Date) < 15])),
                        by = cut(Date, "1 day")]
 #Reset date column (cut resets formatting to factor?)
 names(dateData)[1] <- 'Date'
@@ -47,7 +47,7 @@ dateData[, VolGroup := ifelse(Vol1 < median(Vol1), 1, 2)]
 
 #30 minute returns R1 (first half hour), R2 (2nd to last half hour), R3 (last half hour)
 dateData <- dateData[, .(Date, Open, Close, P1, P2, P3, Size, 
-                         Vol1, Vol2, Vol3, VolGroup,
+                         Vol1, Vol2, Vol3, VolGroup, VolSignal,
                          R1 = P1 / shift(Close) - 1, 
                          R2 = P3 / P2 - 1, 
                          R3 = Close / P3 - 1)]
@@ -75,6 +75,11 @@ summary(mod1)
 #R3 ~ R1 + R2
 mod2 <- lm(R3 ~ R1 + R2, data=dateData) 
 summary(mod2)
+
+#Three variables
+#R3 ~ R1 + R2 + VolSignal
+mod3 <- lm(R3 ~ R1 + R2 + VolSignal, data=dateData) 
+summary(mod3)
 
 #Save regression coefficients for prediction (2 variable model)
 B0 <- coef(mod2)[[1]]
