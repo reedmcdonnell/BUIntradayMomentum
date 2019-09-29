@@ -13,19 +13,20 @@ minuteData <- data.frame(Date=as.POSIXct(character()),
                          stringsAsFactors=FALSE)
 
 #Iterate csv files
-setwd('../SourceData/')
+setwd('../../SourceData/')
+path <- paste0(getwd(), '/')
 
 files <- list.files()
 files <- files[files %like% '*csv']
-for(filename in files) {
-  print(filename)
-  header <- fread(paste0('../SourceData/', filename), header = F, sep = ',', nrows = 1)
+for(file in files) {
+  print(file)
+  header <- fread(paste0(path, file), header = F, sep = ',', nrows = 1)
   #Read file in chunks of 10MM rows
   for(i in 0:100) {
     print(i)
     #Chunk will fail if skip rows > # of rows (done reading)
     done <- tryCatch({
-      data <- fread(paste0('../SourceData/', filename), header = F,
+      data <- fread(paste0(path, file), header = F,
                     sep = ',', skip = 1+i*10e6, nrow = 10e6) %>% data.table() #10MM rows per chunk
       
       colnames(data) <- as.character(as.vector(header[1,]))
