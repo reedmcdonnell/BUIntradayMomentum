@@ -78,7 +78,7 @@ summary(mod2)
 
 #Three variables
 #R3 ~ R1 + R2 + VolSignal
-mod3 <- lm(R3 ~ R1 + R2 + VolSignal, data=dateData) 
+mod3 <- lm(R3 ~ R1 + R2 + Vol1*R1, data=dateData) 
 summary(mod3)
 
 #Save regression coefficients for prediction (2 variable model)
