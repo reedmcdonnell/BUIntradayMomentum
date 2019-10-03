@@ -1,14 +1,15 @@
 ---
 title: "IntradayMomentum"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Intraday Momentum SPY
-```{r echo=FALSE, warning=FALSE}
+```{r echo=FALSE, warning=FALSE, message = FALSE}
 #Clear Workspace
 rm(list = ls())
 
@@ -21,10 +22,9 @@ library(moments)
 library(psych)
 ```
 
-
-## Functions
 ```{r echo = FALSE}
-#Functions
+#FUNCTIONS
+
 histogram <- function(x, title, varTitle) {
   std <- sd(x)
   avg <- mean(x)
@@ -43,8 +43,9 @@ histogram <- function(x, title, varTitle) {
 }
 ```
 
-## Load data
 ```{r echo=FALSE}
+#LOAD DATA
+
 #Load minute data for SPY
 load(paste0('../ConsolidatedData/', 'minuteData.Rda'))
 
@@ -92,6 +93,9 @@ volData <- dcast(bucketData, DATE ~ Bucket, value.var = 'Vol')
 volData[, ncol(volData) := NULL]
 volCols <- unlist(lapply(seq(13), function(x) paste0('V', x)))
 names(volData) <- c('DATE', volCols)
+dates <- volData$DATE
+volData <- volData[, lapply(.SD, FUN = function(x) log(x)), .SDcols = setdiff(colnames(volData), "DATE")]
+volData$DATE <- dates
 volData[, Vol := rowMeans(.SD), by = 'DATE']
 
 sizeData <- dcast(bucketData, DATE ~ Bucket, value.var = 'Size')
@@ -109,16 +113,18 @@ data <- dateData
 ```
 
 ## Preliminary data analysis
-## Histograms
-```{r, warning=FALSE}
+Histograms
+```{r, echo = 15, warning=FALSE}
 histogram(data$R1, 'First 30-Minute Returns', 'R1')
 describe(data$R1)
 histogram(data$R13, 'Last 30-Minute Returns', 'R3')
 describe(data$R13)
-histogram(data$V1, 'First 30-Minute Volatility', 'Vol')
-describe(data$V1)
-histogram(data$V13, 'Last 30-Minute Volatility', 'Vol')
-describe(data$V13)
+#histogram(data$V1, 'First 30-Minute Volatility', 'Vol')
+#describe(data$V1)
+#histogram(data$V13, 'Last 30-Minute Volatility', 'Vol')
+#describe(data$V13)
+histogram(data$Vol, 'Daily Log Volatility', 'Vol')
+describe(data$Vol)
 histogram(data$Size, 'Trade Size', 'Size')
 describe(data$Size)
 ```
@@ -137,6 +143,7 @@ summary(model1)
 ```
 
 ## Strategies
+Long/Short Strategy: R13 = B0 + B1*R1 + ... B12*R12
 ```{r}
 #Long/Short Strategy
 #Predict value
@@ -172,26 +179,32 @@ histogram(data$Strat1Ret, 'Long/Short Strategy Daily Returns', 'Strat1Ret')
 histogram(data$Strat1Ret - data$SPYRet, 'Excess Daily Returns', 'Excess Returns')
 ```
 
-## Remove high volatility days to normalize long/short strategy returns
+## Omit observations with daily volatility oustide 2 and 3 standard devations
+Due to the extrodinary circumstances of 2008, we omit observations with daily volatility greater than 2 & 3 standard deviations compared with the mean daily volatility
 ```{r}
-temp <- data[Vol %between% c(mean(Vol) - 2*sd(Vol), mean(Vol) + 2*sd(Vol))]
+data[, c('Strat1Ret_Vol2', 'Strat1Ret_Vol3') := list(Strat1Ret, Strat1Ret)]
+data[!(Vol %between% c(mean(Vol) - 2*sd(Vol), mean(Vol) + 2*sd(Vol))), Strat1Ret_Vol2 := 0]
+data[!(Vol %between% c(mean(Vol) - 3*sd(Vol), mean(Vol) + 3*sd(Vol))), Strat1Ret_Vol3 := 0]
 
-#Long/Hold strategy with +/- 3 standard deviations returns ommited
-temp$Strat1CumRet <- cumprod(1 + temp$Strat1Ret)
-
-#Excess Returns
-temp[, ExcessRet := Strat1Ret - SPYRet]
+data[, Strat1_Vol2CumRet := cumprod(1 + Strat1Ret_Vol2)]
+data[, Strat1_Vol3CumRet := cumprod(1 + Strat1Ret_Vol3)]
 
 #Plot Long/Hold std modified strategy
 plot <- ggplot() +
-  geom_line(data = temp, aes(x = Date, y = SPYCumRet, colour = 'SPY Long')) + 
-  geom_line(data = temp, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy'))
+  geom_line(data = data, aes(x = Date, y = SPYCumRet, colour = 'SPY Long')) + 
+  geom_line(data = data, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy')) + 
+  geom_line(data = data, aes(x = Date, y = Strat1_Vol2CumRet, colour = 'Long/Short Strategy +/- 2 Std. Dev. Volatility')) + 
+  geom_line(data = data, aes(x = Date, y = Strat1_Vol3CumRet, colour = 'Long/Short Strategy +/- 3 Std. Dev. Volatility')) + 
+  xlab('Dates') + ylab('Return') + ggtitle('Strategy Return')
 plot(plot)
-
-#Histogram excess returns
-histogram(temp$ExcessRet, 'Long/Short Strategy Excess Returns Std Modified', 'Returns')
-
-#Portfoli metrics
-sharpe <- ((tail(temp$Strat1CumRet, 1) - tail(temp$SPYCumRet, 1)) / 14) / sd(temp$Strat1Ret - temp$SPYRet)
 ```
 
+## Histograms of strategies modified by volatiliyt
+```{r, warning=FALSE}
+histogram(data$Strat1Ret - data$SPYRet, 'Long/Short Strategy Daily Returns', 'Returns')
+describe(data$Strat1Ret - data$SPYRet)
+histogram(data$Strat1Ret_Vol2 - data$SPYRet, 'Long/Short Strategy (+/- 2 Std. Dev. Volatility) Excess Daily Returns', 'Returns')
+describe(data$Strat1Ret_Vol2 - data$SPYRet)
+histogram(data$Strat1Ret_Vol3 - data$SPYRet, 'Long/Short Strategy (+/- 3 Std. Dev. Volatility) Excess Daily Returns', 'Returns')
+describe(data$Strat1Ret_Vol3 - data$SPYRet)
+```
