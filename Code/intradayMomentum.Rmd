@@ -8,7 +8,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ## Intraday Momentum SPY
-```{r echo=FALSE}
+```{r echo=FALSE, warning=FALSE}
 #Clear Workspace
 rm(list = ls())
 
@@ -18,13 +18,34 @@ library(lubridate)
 library(dplyr)
 library(ggplot2)
 library(moments)
+library(psych)
 ```
 
-## Load data
+```{r echo = FALSE}
+#Functions
+histogram <- function(x, title, varTitle) {
+  std <- sd(x)
+  avg <- mean(x)
+  qplot(dateData$R3,
+      geom="histogram",
+      binwidth=.001,
+      xlim=c(avg - 3 * std, avg + 3 * std),
+      main=title, 
+      xlab=varTitle,  
+      fill=I("blue"), 
+      col=I("red"), 
+      alpha=I(.2)) + annotate("text", label = paste0('Mean: ', signif(avg, 4), ', Std: ', signif(std, 4), '\n', 
+                                                     'Kurt: ', signif(kurtosis(x), 4), ' Skew: ', signif(skewness(x), 4)),
+                              x = avg - 2 * std, y = 600, size = 4, colour = "red")
+}
+```
+
+## Load data Version 1
+SPY TAQ trade data is aggregated by minute to compute minute returns and volume throughout the trading day (9:30am - 4:00pm).
+Data is further aggregated by trading day to compute half-hour returns, volume, and volatility.
 ```{r echo=FALSE}
 #Load minute data for SPY
 load(paste0('../ConsolidatedData/', 'minuteData.Rda'))
-
 #Fix timezone issue
 attr(minuteData$Date, "tzone") <- "EST5EDT"
 minuteData[, Date := Date - 60 * 60] #<- minuteData$Date - 60*60 #subratct hour
@@ -32,7 +53,6 @@ minuteData[, Date := Date - 60 * 60] #<- minuteData$Date - 60*60 #subratct hour
 minuteData$Ret <- minuteData$Price / shift(minuteData$Price) - 1
 #Move returns backward so Ret for 9:30 -> Price @ 9:31 / Price @ 9:30 - 1
 minuteData$Ret <- shift(minuteData$Ret, -1)
-
 #Aggregate minute data by date and get P1 (10:00 price), P2 (15:00 price), and P3 (15:30 price)
 dateData <- minuteData[, .(Open = first(Price), Close = last(Price), 
                            P1 = Price[hour(Date) == 10 & minute(Date) == 0],
@@ -51,60 +71,97 @@ dateData <- minuteData[, .(Open = first(Price), Close = last(Price),
 #Reset date column (cut resets formatting to factor?)
 names(dateData)[1] <- 'Date'
 dateData$Date <- as.Date(dateData$Date)
-
 #Sort data and remove NAs
 dateData <- dateData[order(Date)]
 dateData <- na.omit(dateData)
-
 #Volatility group based on first 30 minutes return volatility
 dateData[, VolGroup := ifelse(Vol1 < median(Vol1), 1, 2)]
-
 #30 minute returns R1 (first half hour), R2 (2nd to last half hour), R3 (last half hour)
 dateData[, R1 := P1 / shift(Close) - 1]
 dateData[, R2 := P3 / P2 - 1]
 dateData[, R3 := Close / P3 - 1]
 dateData[, R4 := P3 / shift(Close) - 1]
-
 #Compute Z-Score for Size variable
 dateData[, Size1 := (Size1 - mean(Size1)) / sd(Size1)]
 dateData[, Size := (Size - mean(Size)) / sd(Size)]
-
 #Remove NAs
 dateData <- na.omit(dateData)
 ```
 
+## Load data Version 2
+```{r echo=FALSE}
+#Load minute data for SPY
+load(paste0('../ConsolidatedData/', 'minuteData.Rda'))
 
+#Fix timezone issue
+attr(minuteData$Date, "tzone") <- "EST5EDT"
+minuteData[, Date := Date - 60 * 60] #<- minuteData$Date - 60*60 #subratct hour
+
+#Seperate Date and Time from POSIX for other Use
+minuteData[, DATE := as.Date(Date)]
+minuteData[, TIME := strftime(Date, format="%H:%M:%S")]
+
+#Remove rows that don't have continuous price history
+numOfDailyObs <- length(seq(as.POSIXct("2000-01-01 9:30:00"), as.POSIXct("2000-01-01 16:00:00"), by='min')) #390 minutes + 1 = 391 to include bounds
+numOfDailyObs <- 391
+minuteData <- minuteData[, if (.N == numOfDailyObs) .SD, by = (DATE)]
+
+#Calculate minute return: FIRST RETURN USE LAST CLOSE PRICE? (4pm - 10am)
+#minuteData[, Price[hour(Date) == 9 & minute(Date) == 30] = Price[]
+minuteData[, Ret := Price / shift(Price) - 1, by = DATE]
+
+#minuteData[, Ret := Price / shift(Price) - 1]
+#minuteData[, Ret := shift(Ret, -1)]
+
+#Group by 30 minute buckets and calculate return and volatility
+bucketData <- minuteData[, .(DATE = first(DATE), TIME = first(TIME), Ret = (tail(cumprod(1 + Ret), 1) - 1) / 100, 
+                             Vol = sd(Ret), Size = sum(Size)), by = cut(Date, '30 min')]
+names(bucketData)[1] <- 'Date'
+bucketData$Date <- as.POSIXct(bucketData$Date)
+
+#Create time group number
+bucketData[, Bucket := .GRP, by = TIME]
+
+retData <- dcast(bucketData, DATE ~ Bucket, value.var = 'Ret')
+retData[, ncol(retData) := NULL]
+retCols <- unlist(lapply(seq(13), function(x) paste0('R', x)))
+names(retData) <- c('DATE', retCols)
+
+volData <- dcast(bucketData, DATE ~ Bucket, value.var = 'Vol')
+volData[, ncol(volData) := NULL]
+volCols <- unlist(lapply(seq(13), function(x) paste0('V', x)))
+names(volData) <- c('DATE', volCols)
+
+sizeData <- dcast(bucketData, DATE ~ Bucket, value.var = 'Size')
+sizeData[, Size := Reduce(`+`, .SD), by = DATE]
+sizeData <- sizeData[, .(DATE, Size)]
+
+dateData2 <- Reduce(function (x, y) merge(x, y, by = c('DATE')), list(retData, volData, sizeData))
+names(dateData2)[1] <- 'Date'
+
+test <- merge(dateData[, .(Date, R1, R2, R3)], dateData2[, .(Date, R1, R12, R13)], by = 'Date')
+```
 
 ## Preliminary data analysis
 ## Histograms
-```{r}
-histogram <- function(x, title, varTitle) {
-  std <- sd(x)
-  avg <- mean(x)
-  qplot(dateData$R3,
-      geom="histogram",
-      binwidth=.001,
-      xlim=c(avg - 3 * std, avg + 3 * std),
-      main=title, 
-      xlab=varTitle,  
-      fill=I("blue"), 
-      col=I("red"), 
-      alpha=I(.2)) + annotate("text", label = paste0('Mean: ', signif(avg, 4), ', Std: ', signif(std, 4), '\n', 
-                                                     'Kurt: ', signif(kurtosis(x), 4), ' Skew: ', signif(skewness(x), 4)),
-                              x = avg - 2 * std, y = 600, size = 4, colour = "red")
-}
-
+```{r, warning=FALSE}
 histogram(dateData$R1, 'First 30-Minute Returns', 'R1')
+describe(dateData$R1)
 histogram(dateData$R3, 'Last 30-Minute Returns', 'R3')
+describe(dateData$R3)
 histogram(dateData$Vol, 'Daily Volatility', 'Vol')
+describe(dateData$Vol)
 ```
 
 ## Regressions
 ```{r}
 #Normal Regression
 #R3 ~ R1
-mod1 <- lm(R3 ~ R1, data=dateData)
+mod1 <- lm(R3 ~ R1 + R2, data=dateData)
 summary(mod1)
+
+test <- lm(R13 ~ R1 + R2 + R3 + R4 + R5 + R6 + R7 + R8 + R9 + R10 + R11 + R12, data = dateData2)
+summary(test)
 
 #Two variables
 #R3 ~ R1 + R2
@@ -156,7 +213,7 @@ plot(plot)
 ```
 
 ## Histogram of Strategy returns
-```{r}
+```{r warning=FALSE}
 histogram(dateData$Strat1Ret, 'Long/Short Strategy Daily Returns', 'Strat1Ret')
 histogram(dateData$Strat1Ret - dateData$SPYRet, 'Long/Short Strategy - SPY Daily Returns', 'Returns')
 ```
@@ -164,10 +221,23 @@ histogram(dateData$Strat1Ret - dateData$SPYRet, 'Long/Short Strategy - SPY Daily
 ```{r}
 temp <- dateData
 temp <- dateData[Strat1Ret %between% c(mean(Strat1Ret) - 2*sd(Strat1Ret), mean(Strat1Ret) + 2*sd(Strat1Ret))]
+
+#Long/Hold strategy with +/- 3 standard deviations returns ommited
 temp$Strat1CumRet <- cumprod(1 + temp$Strat1Ret)
+
+#Excess Returns
+temp[, ExcessRet := Strat1Ret - SPYRet]
+
+#Plot Long/Hold std modified strategy
 plot <- ggplot() +
   geom_line(data = temp, aes(x = Date, y = SPYCumRet, colour = 'SPY Long')) + 
   geom_line(data = temp, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy'))
 plot(plot)
+
+#Histogram excess returns
+histogram(temp$ExcessRet, 'Long/Short Strategy Excess Returns Std Modified', 'Returns')
+
+#Portfoli metrics
+sharpe <- ((tail(temp$Strat1CumRet, 1) - tail(temp$SPYCumRet, 1)) / 14) / sd(temp$Strat1Ret - temp$SPYRet)
 ```
 
