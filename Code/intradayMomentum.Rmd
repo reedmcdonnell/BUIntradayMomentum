@@ -20,6 +20,9 @@ library(dplyr)
 library(ggplot2)
 library(moments)
 library(psych)
+library(zoo)
+library(lmtest)
+library(plm)
 ```
 
 ```{r echo = FALSE}
@@ -46,20 +49,16 @@ histogram <- function(x, title, varTitle) {
 ```{r echo=FALSE}
 #LOAD DATA
 
-#Load minute data for SPY
-load(paste0('../ConsolidatedData/', 'minuteData.Rda'))
-
-#Fix timezone issue
-attr(minuteData$Date, "tzone") <- "EST5EDT"
-minuteData[, Date := Date - 60 * 60] #<- minuteData$Date - 60*60 #subratct hour
+#Load minute data
+load(paste0('../ConsolidatedData2/', 'TLT.Rda'))
 
 #Seperate Date and Time from POSIX for other Use
 minuteData[, DATE := as.Date(Date)]
 minuteData[, TIME := strftime(Date, format="%H:%M:%S")]
 
 #Remove rows that don't have continuous price history
-numOfDailyObs <- length(seq(as.POSIXct("2000-01-01 9:30:00"), as.POSIXct("2000-01-01 16:00:00"), by='min')) #390 minutes + 1 = 391 to include bounds
-numOfDailyObs <- 391
+numOfDailyObs <- length(seq(as.POSIXct("2000-01-01 9:30:00"), as.POSIXct("2000-01-01 16:00:00"), by='min'))
+#390 minutes + 1 = 391 to include bounds
 minuteData <- minuteData[, if (.N == numOfDailyObs) .SD, by = (DATE)]
 
 #Replace 9:30 Price with previous Close Price
@@ -140,6 +139,11 @@ summary(model1)
 #formula <- paste("R13 ~", paste(head(retCols, length(retCols) - 1), collapse = " + "))
 #model1 <- lm(formula, data = data)
 #summary(model1)
+```
+
+## Newey West Robust T-statistic
+```{r}
+coeftest(model1, vcov = vcovHC(model1))
 ```
 
 ## Strategies
