@@ -92,29 +92,108 @@ loadData <- function(ticker = 'SPY') {
   return(data)
 }
 
-
+#Loop through all source data - NOTE: Session -> Set Working Directory './'
+getTickers <- function() {
+  tickers <- c()
+  
+  files = list.files(path = '../ConsolidatedData2/', pattern = '.Rda')
+  for(file in files) {
+    ticker <- strsplit(file, '\\.')[[1]][1]
+    tickers <- c(tickers, ticker)
+  }
+  
+  return(tickers)
+}
 
 #Given data frame
 #Returns coefR1 coefR5 pValR1 pValR5 adjRSquared residualStdError
 #Note: isLookback dictates whether the complete history backwards from a date is used
 #      or if date minus lookback data is used
-rollRegressFunc <- function(x, isLookback) {
-  formula <- 'R13 ~ R1 + R5'
-  model <- lm(formula, data = x)
+rollRegressFunc <- function(df, isLookback, inVars) {
+  formula <- paste("R13 ~", paste(inVars, collapse = " + "))
+  model <- lm(formula, data = df)
   modelSummary <- summary(model)
   coeffs <- modelSummary$coefficients[, 1]
   
-  pVals <- t(coeftest(model, vcov = vcovHC(model))[2:3, 4]) %>% data.table()
-  names(pVals) <- sapply(names(pVals), function(x) paste0('PVal', x))
-  coeffs <- t(coeffs[c('R1', 'R5')]) %>% data.table()
-  names(coeffs) <- sapply(names(coeffs), function(x) paste0('Coeff', x))
+  coeffs <- t(coeffs[-c(1)]) %>% data.table()
+  coeffs[, Type := 'Coeff']
   
-  temp <- cbind(pVals, coeffs)
+  pVals <- t(coeftest(model, vcov = vcovHC(model))[-1, 4]) %>% data.table()
+  names(pVals) <- inVars
+  pVals[, Type := 'PVal']
   
-  temp[, AdjRSquared := modelSummary$adj.r.squared]
-  temp[, ResidualStdErr := modelSummary$sigma]
-  temp[, Date := as.character(max(x$Date))]
-  temp[, Lookback := isLookback]
+  regVars <- rbind(pVals, coeffs)
+  regVars[, Date := as.character(max(df$Date))]
+  regVars[, Lookback := isLookback]
   
-  return(temp)
+  #P-Val for F-Statistic
+  FStatPVal <- pf(modelSummary$fstatistic[1],modelSummary$fstatistic[2],modelSummary$fstatistic[3])
+  
+  modelPerf <- data.frame(Date = as.character(max(df$Date)), AdjRSquared = modelSummary$adj.r.squared, 
+                          ResidualStdErr = modelSummary$sigma, FStatPVal = FStatPVal, Lookback = isLookback, 
+                          stringsAsFactors = FALSE) %>% data.table()
+  
+  return(list(regVars, modelPerf))
+}
+
+#master dataframe input
+#Ouput: time-series of statistics of input variables and fitted model performance by ticker
+getRollingRegressionData <- function(data, bestVars, ticker) {
+  #250 trading days a year * 3 years
+  lookback <- 250*3
+  
+  rollRegCols <- c('Date', bestVars, 'Type')
+  rollRegVars <- data.frame()
+  for (c in rollRegCols) rollRegVars[[c]] <- as.character()
+  rollRegVars <- setDT(rollRegVars)
+  rollRegVars[, Lookback := as.logical()]
+  
+  rollModelPerf <- data.frame(Date = as.character(), AdjRSquared = as.numeric(), 
+                              ResidualStdErr = as.numeric(), FStatPVal = as.numeric(),
+                              Lookback = as.logical(), stringsAsFactors = FALSE)
+  
+  #Apply rolling regression
+  for(date in data[Date >= min(Date) + lookback, Date]) {
+    date <- as.Date(date)
+    temp <- rollRegressFunc(data[Date <= date & Date > date - lookback], isLookback = TRUE, bestVars)
+    rollRegVars <- rbind(rollRegVars, temp[[1]])
+    rollModelPerf <- rbind(rollModelPerf, temp[[2]])
+    temp <- rollRegressFunc(data[Date <= date], isLookback = FALSE, bestVars)
+    rollRegVars <- rbind(rollRegVars, temp[[1]])
+    rollModelPerf <- rbind(rollModelPerf, temp[[2]])
+  }
+  
+  rollRegVars[, Date := as.Date(Date)]
+  rollRegVars[, Lookback := as.logical(Lookback)]
+  rollRegVars[, (bestVars) := lapply(.SD, as.numeric), .SDcols = bestVars]
+  rollModelPerf[, Date := as.Date(Date)]
+  
+  #Check for too many tickers here...
+  
+  rollRegVars[, Ticker := ticker]
+  rollModelPerf[, Ticker := ticker]
+  
+  return(list(rollRegVars, rollModelPerf))
+}
+
+#Get most significant columns according to Newey-West
+#Ignores intercept, needs alpha to enter significance level
+getBestVars <- function(data, alphaToEnter) {
+  #R13 = B0 + B1*R1 + B2*R2 + ... + B12*R12
+  formula <- paste("R13 ~", paste(setdiff(retCols, 'R13'), collapse = " + "))
+  model <- lm(formula, data = data)
+  
+  ## Newey West Robust T-statistic
+  #Note: This will not effect R^2 or coefficients - provides adjusted t-statistic
+  neweyWest <- coeftest(model, vcov = vcovHC(model))
+  
+  bestVars <- neweyWest[, 4]
+  bestVars <- bestVars[bestVars < alphaToEnter] #5% significance
+  if(length(bestVars) < 1) {
+    return(c('R1'))
+  }
+  bestVars <- names(bestVars)
+  bestVars <- bestVars[bestVars != "(Intercept)"]
+  
+  return(bestVars)
 }

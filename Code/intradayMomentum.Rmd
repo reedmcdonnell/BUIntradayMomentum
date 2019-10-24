@@ -2,19 +2,20 @@
 title: "IntradayMomentum"
 output:
   html_document: default
-  pdf_document: default
 ---
 
-```{r setup, include=FALSE}
+```{r setup, include=TRUE, eval=TRUE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
-# Intraday Momentum - SPY
 
 ```{r echo=FALSE}
 #Clear Workspace
 rm(list = ls())
+
+ticker <- 'SPY'
 ```
+
+# Intraday Momentum - `r ticker`
 
 ```{r echo=FALSE, warning=FALSE, message = FALSE}
 #Source files
@@ -24,7 +25,7 @@ source('./functions.R')
 
 ```{r echo = FALSE}
 #Load Data
-data <- loadData(ticker = 'SPY')
+data <- loadData(ticker)
 ```
 
 ## Preliminary data analysis
@@ -33,10 +34,6 @@ histogram(data$R1, 'First 30-Minute Returns', 'R1')
 describe(data$R1)
 histogram(data$R13, 'Last 30-Minute Returns', 'R3')
 describe(data$R13)
-#histogram(data$V1, 'First 30-Minute Volatility', 'Vol')
-#describe(data$V1)
-#histogram(data$V13, 'Last 30-Minute Volatility', 'Vol')
-#describe(data$V13)
 histogram(data$Vol, 'Daily Log Volatility', 'Vol')
 describe(data$Vol)
 histogram(data$Size, 'Trade Size', 'Size')
@@ -59,7 +56,19 @@ summary(model)
 ## Newey West Robust T-statistic
 #Note: This will not effect R^2 or coefficients - provides adjusted t-statistic
 print('Newey West Robust T-statistic')
-coeftest(model, vcov = vcovHC(model))
+neweyWest <- coeftest(model, vcov = vcovHC(model))
+print(neweyWest)
+
+alphaToEnter <- .08
+
+bestVars <- neweyWest[, 4]
+bestVars <- bestVars[bestVars < alphaToEnter] #5% significance
+if(length(bestVars[bestVars < alphaToEnter]) < 1) {
+  bestVars <- c('R1')
+} else {
+  bestVars <- names(bestVars[bestVars < alphaToEnter])
+}
+bestVars <- bestVars[bestVars != "(Intercept)"]
 ```
 
 ## Strategies
@@ -75,17 +84,17 @@ data[, RandomSignal := rbinom(.N, 1, .5)]
 data[, RandomRet := ifelse(Strat1Signal == 1, R13, -R13)]
 data[, RandomCumRet := cumprod(1 + RandomRet)]
 
-#SPY Hold Strategy
-data[, SPYRet := Close / shift(Close) - 1]
-data[is.na(SPYRet), SPYRet := 0]
-data[, SPYCumRet := cumprod(1 + SPYRet)]
+#Benchmark Hold Strategy
+data[, BenchmarkRet := Close / shift(Close) - 1]
+data[is.na(BenchmarkRet), BenchmarkRet := 0]
+data[, BenchmarkCumRet := cumprod(1 + BenchmarkRet)]
 ```
 
 ## Plot Strategies
 ```{r echo = FALSE}
 #Plot strategies
 plot <- ggplot() +
-  geom_line(data = data, aes(x = Date, y = SPYCumRet, colour = 'SPY Long')) + 
+  geom_line(data = data, aes(x = Date, y = BenchmarkRet, colour = 'Benchmark Long Strategy')) + 
   geom_line(data = data, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy')) + 
   geom_line(data = data, aes(x = Date, y = RandomCumRet, colour = 'Random Strategy')) + 
   xlab('Dates') + ylab('Return') + ggtitle('Strategy Return')
@@ -95,7 +104,7 @@ plot(plot)
 ## Histogram of Strategy returns
 ```{r echo = FALSE, warning=FALSE}
 histogram(data$Strat1Ret, 'Long/Short Strategy Daily Returns', 'Strat1Ret')
-histogram(data$Strat1Ret - data$SPYRet, 'Excess Daily Returns', 'Excess Returns')
+histogram(data$Strat1Ret - data$BenchmarkRet, 'Excess Daily Returns', 'Excess Returns')
 ```
 
 ## Omit observations with daily volatility oustide 2 and 3 standard devations
@@ -109,7 +118,7 @@ data[, Strat1_Vol3CumRet := cumprod(1 + Strat1Ret_Vol3)]
 
 #Plot Long/Hold std modified strategy
 plot <- ggplot() +
-  geom_line(data = data, aes(x = Date, y = SPYCumRet, colour = 'SPY Long')) + 
+  geom_line(data = data, aes(x = Date, y = BenchmarkRetCumRet, colour = 'Benchmark Long Strategy')) + 
   geom_line(data = data, aes(x = Date, y = Strat1CumRet, colour = 'Long/Short Strategy')) + 
   geom_line(data = data, aes(x = Date, y = Strat1_Vol2CumRet, colour = 'Long/Short Strategy +/- 2 Std. Dev. Volatility')) + 
   geom_line(data = data, aes(x = Date, y = Strat1_Vol3CumRet, colour = 'Long/Short Strategy +/- 3 Std. Dev. Volatility')) + 
@@ -119,94 +128,100 @@ plot(plot)
 
 ## Histograms of strategies modified by volatility
 ```{r, echo = FALSE, warning=FALSE}
-histogram(data$Strat1Ret - data$SPYRet, 'Long/Short Strategy Daily Returns', 'Returns')
-describe(data$Strat1Ret - data$SPYRet)
-histogram(data$Strat1Ret_Vol2 - data$SPYRet, 'Long/Short Strategy (+/- 2 Std. Dev. Volatility) Excess Daily Returns', 'Returns')
-describe(data$Strat1Ret_Vol2 - data$SPYRet)
-histogram(data$Strat1Ret_Vol3 - data$SPYRet, 'Long/Short Strategy (+/- 3 Std. Dev. Volatility) Excess Daily Returns', 'Returns')
-describe(data$Strat1Ret_Vol3 - data$SPYRet)
+histogram(data$Strat1Ret - data$BenchmarkRetRet, 'Long/Short Strategy Daily Returns', 'Returns')
+describe(data$Strat1Ret - data$BenchmarkRetRet)
+histogram(data$Strat1Ret_Vol2 - data$BenchmarkRetRet, 'Long/Short Strategy (+/- 2 Std. Dev. Volatility) Excess Daily Returns', 'Returns')
+describe(data$Strat1Ret_Vol2 - data$BenchmarkRetRet)
+histogram(data$Strat1Ret_Vol3 - data$BenchmarkRetRet, 'Long/Short Strategy (+/- 3 Std. Dev. Volatility) Excess Daily Returns', 'Returns')
+describe(data$Strat1Ret_Vol3 - data$BenchmarkRetRet)
 ```
 
 
 ```{r, echo=FALSE, warning=FALSE}
 #Rolling Regression Data
 #250 trading days a year * 3 years
-lookback <- 250*3
+lookback <- 250*5
 
-rollingRegression <- data.frame(Date = as.character(), CoeffR1 = as.numeric(), CoeffR5 = as.numeric(), 
-                                PValR1 = as.numeric(), PValR5 = as.numeric(),
-                                AdjRSquared = as.numeric(), ResidualStdErr = as.numeric(), 
-                                Lookback = as.logical(), stringsAsFactors = FALSE)
+rollRegCols <- c('Date', bestVars, 'Type', 'Lookback')
+rollRegVars <- data.frame()
+for (c in rollRegCols) rollRegVars[[c]] <- as.character()
+
+rollModelPerf <- data.frame(Date = as.character(), AdjRSquared = as.numeric(), 
+                            ResidualStdErr = as.numeric(), Lookback = as.logical(), stringsAsFactors = FALSE)
 
 #Apply rolling regression
-#date <- as.Date('2014-01-01')
-for(date in data[Date >= '2004-01-01', Date]) {
+for(date in data[Date >= min(Date) + lookback, Date]) {
   date <- as.Date(date)
-  temp <- rollRegressFunc(data[Date <= date & Date > date - lookback], isLookback = TRUE)
-  rollingRegression <- rbind(rollingRegression, temp)
-  temp <- rollRegressFunc(data[Date <= date], isLookback = FALSE)
-  rollingRegression <- rbind(rollingRegression, temp)
+  temp <- rollRegressFunc(data[Date <= date & Date > date - lookback], isLookback = TRUE, bestVars)
+  rollRegVars <- rbind(rollRegVars, temp[[1]])
+  rollModelPerf <- rbind(rollModelPerf, temp[[2]])
+  temp <- rollRegressFunc(data[Date <= date], isLookback = FALSE, bestVars)
+  rollRegVars <- rbind(rollRegVars, temp[[1]])
+  rollModelPerf <- rbind(rollModelPerf, temp[[2]])
 }
 
-rollingRegression[, Date := as.Date(Date)]
+rollRegVars[, Date := as.Date(Date)]
+rollRegVars[, Lookback := as.logical(Lookback)]
+rollRegVars[, (bestVars) := lapply(.SD, as.numeric), .SDcols = bestVars]
+rollModelPerf[, Date := as.Date(Date)]
 ```
 
 
 ## Rolling Regression
 ### Lookback
 ```{r echo = FALSE}
-#Coeffs
-plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == TRUE], aes(x = Date, y = CoeffR1, colour = 'R1')) + 
-  geom_line(data = rollingRegression[Lookback == TRUE], aes(x = Date, y = CoeffR5, colour = 'R5')) + 
+temp <- melt(rollRegVars, id.vars = c('Date', 'Lookback', 'Type'), measure.vars = bestVars) %>% data.table()
+
+#Coefficients
+plot <- ggplot(data = temp[Type == 'Coeff' & Lookback == TRUE], 
+               aes(x = Date, y = value, group = variable, color = variable)) + geom_line() + 
   xlab('Dates') + ylab('Coefficient') + ggtitle('Regression Coefficients')
 plot(plot)
 
-#T-Statistics
-plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == TRUE], aes(x = Date, y = PValR1, colour = 'R1')) + 
-  geom_line(data = rollingRegression[Lookback == TRUE], aes(x = Date, y = PValR5, colour = 'R5')) + 
-  xlab('Dates') + ylab('P-Value') + ggtitle('Newey West Robust T-statistics for P-Value')
+#P-Values
+plot <- ggplot(data = temp[Type == 'PVal' & Lookback == TRUE], 
+               aes(x = Date, y = value, group = variable, color = variable)) + geom_line() + 
+  xlab('Dates') + ylab('P-Value') + ggtitle('P-Value')
 plot(plot)
 
 #Adjusted R-Squared
 plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == TRUE], aes(x = Date, y = AdjRSquared, colour = 'R^2')) + 
+  geom_line(data = rollModelPerf[Lookback == TRUE], aes(x = Date, y = AdjRSquared, colour = 'R^2')) + 
   xlab('Dates') + ylab('R^2') + ggtitle('Adjusted R-Squared')
 plot(plot)
 
 #Residual Standard Error
 plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == TRUE], aes(x = Date, y = ResidualStdErr, colour = 'Error')) + 
+  geom_line(data = rollModelPerf[Lookback == TRUE], aes(x = Date, y = ResidualStdErr, colour = 'Error')) + 
   xlab('Dates') + ylab('Error') + ggtitle('Standard Error of Residuals')
 plot(plot)
 ```
 
 ### Complete History
 ```{r echo = FALSE}
-#Coeffs
-plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == FALSE], aes(x = Date, y = CoeffR1, colour = 'R1')) + 
-  geom_line(data = rollingRegression[Lookback == FALSE], aes(x = Date, y = CoeffR5, colour = 'R5')) + 
+temp <- melt(rollRegVars, id.vars = c('Date', 'Lookback', 'Type'), measure.vars = bestVars) %>% data.table()
+
+#Coefficients
+plot <- ggplot(data = temp[Type == 'Coeff' & Lookback == FALSE], 
+               aes(x = Date, y = value, group = variable, color = variable)) + geom_line() + 
   xlab('Dates') + ylab('Coefficient') + ggtitle('Regression Coefficients')
 plot(plot)
 
-#T-Statistics
-plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == FALSE], aes(x = Date, y = PValR1, colour = 'R1')) + 
-  geom_line(data = rollingRegression[Lookback == FALSE], aes(x = Date, y = PValR5, colour = 'R5')) + 
-  xlab('Dates') + ylab('P-Value') + ggtitle('Newey West Robust T-statistics for P-Value')
+#P-Values
+plot <- ggplot(data = temp[Type == 'PVal' & Lookback == FALSE], 
+               aes(x = Date, y = value, group = variable, color = variable)) + geom_line() + 
+  xlab('Dates') + ylab('P-Value') + ggtitle('P-Value')
 plot(plot)
 
 #Adjusted R-Squared
 plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == FALSE], aes(x = Date, y = AdjRSquared, colour = 'R^2')) + 
+  geom_line(data = rollModelPerf[Lookback == FALSE], aes(x = Date, y = AdjRSquared, colour = 'R^2')) + 
   xlab('Dates') + ylab('R^2') + ggtitle('Adjusted R-Squared')
 plot(plot)
 
 #Residual Standard Error
 plot <- ggplot() +
-  geom_line(data = rollingRegression[Lookback == FALSE], aes(x = Date, y = ResidualStdErr, colour = 'Error')) + 
+  geom_line(data = rollModelPerf[Lookback == FALSE], aes(x = Date, y = ResidualStdErr, colour = 'Error')) + 
   xlab('Dates') + ylab('Error') + ggtitle('Standard Error of Residuals')
 plot(plot)
 ```
